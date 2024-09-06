@@ -9,7 +9,7 @@ function pluginQueries() {
             excerpt
             labels
             stats {
-              currentInstalls
+              currentInstallPercentage
               trend
             }
             healthScore {
@@ -57,7 +57,7 @@ function pluginQueries() {
                 'exact',
                 'custom',
             ],
-            customRanking: ['desc(stats.currentInstalls)'],
+            customRanking: ['desc(stats.currentInstallPercentage)'],
             attributesForFaceting: ['labels'],
             attributesToIndex: [
                 'name',

@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import {dirname} from 'path';
+import fs from 'fs';
 import {fileURLToPath} from 'url';
 import algoliaQueries from './src/utils/algolia-queries.mjs';
 
@@ -27,7 +28,10 @@ Object.keys(process.env).forEach(key => {
     }
     element[splits.slice(-1)[0]] = process.env[key];
 });
-
+const resolvePath = fn => new URL(import.meta.resolve(fn));
+const darkCodeTheme = fs.readFileSync(resolvePath('github-syntax-dark/lib/github-dark.css'), 'utf8');
+const autoCodeTheme = `@media (prefers-color-scheme: dark){${darkCodeTheme}}`;
+fs.writeFileSync(resolvePath('github-syntax-dark/lib/github-auto.css'), autoCodeTheme);
 // This is the content of your gatsby-config.js
 // and what you need to provide as schema:
 const config = {
@@ -51,13 +55,16 @@ config.plugins = [
             siteUrl: 'https://plugins.jenkins.io/',
             githubBranch: 'master',
             githubRepo: 'jenkins-infra/plugin-site',
+            reportAProblemTemplate: '4-bug.yml',
+            theme: 'auto',
             extraCss: [
                 '@import \'./styles/ubuntu-fonts.css\';',
                 '@import \'./styles/lato-fonts.css\';',
                 '@import \'./styles/roboto-fonts.css\';',
                 '@import \'./styles/base.css\';',
                 '@import \'./styles/font-icons.css\';',
-                '@import \'github-syntax-light/lib/github-light.css\';'
+                '@import \'github-syntax-light/lib/github-light.css\';',
+                '@import \'github-syntax-dark/lib/github-auto.css\';'
             ],
         },
     },
@@ -86,7 +93,8 @@ config.plugins = [
                 {
                     resolve: '@halkeye/gatsby-rehype-autolink-headers',
                     options: {
-                        isIconAfterHeader: true
+                        isIconAfterHeader: true,
+                        icon: '<ion-icon name="link-outline"></ion-icon>'
                     }
                 },
                 {
@@ -99,7 +107,7 @@ config.plugins = [
                     resolve: '@jenkins-cd/gatsby-rehype-rewrite-img-src',
                 },
                 {
-                    resolve: '@jenkins-cd/gatsby-rehype-wrap-tables-bootstrap'
+                    resolve: '@jenkins-cd/gatsby-rehype-wrap-tables-bootstrap',
                 }
                 // 'gatsby-rehype-prismjs',
             ],

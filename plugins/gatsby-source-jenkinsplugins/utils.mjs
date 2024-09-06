@@ -4,7 +4,7 @@ import path from 'path';
 import crypto from 'crypto';
 import {load} from 'cheerio';
 import {execSync} from 'child_process';
-import axiosRetry from 'axios-retry';
+import axiosRetry, {exponentialDelay} from 'axios-retry';
 import {parse as parseDate} from 'date-fns';
 import PQueue from 'p-queue';
 import {parseStringPromise} from 'xml2js';
@@ -22,7 +22,7 @@ import findPackageJson from 'find-package-json';
 
 const API_URL = process.env.JENKINS_IO_API_URL || 'https://plugins.jenkins.io/api';
 
-axiosRetry(axios, {retries: 3});
+axiosRetry(axios, {retries: 5, retryDelay: exponentialDelay});
 
 const requestGET = async ({url, reporter}) => {
     const activity = reporter.activityTimer(`Fetching '${url}'`);
@@ -63,7 +63,12 @@ const MARKDOWN_BLOB_RE = /https?:\/\/github.com\/(jenkinsci|jenkins-infra)\/([^/
 const getPluginContent = async ({wiki, pluginName, reporter, createNode, createContentDigest}) => {
     const createWikiNode = async (mediaType, url, content) => {
         if (mediaType === 'text/markdown') {
-            content = await markdownToHtml(content);
+            try {
+                content = await markdownToHtml(content);
+            } catch (err) {
+                reporter.error(`error converting ${pluginName}`, err);
+                throw err;
+            }
             mediaType = 'text/pluginhtml';
         }
         return createNode({
@@ -80,6 +85,7 @@ const getPluginContent = async ({wiki, pluginName, reporter, createNode, createC
         });
     };
     if (!wiki.url) {
+        reporter.error(`missing wiki for ${pluginName}`);
         return null;
     }
     if (!shouldFetchPluginContent(pluginName)) {
@@ -101,10 +107,10 @@ const getPluginContent = async ({wiki, pluginName, reporter, createNode, createC
                 return createWikiNode('text/markdown', url, body);
             }
         }
-        const data = await requestGET({reporter, url: `https://plugins.jenkins.io/api/plugin/${pluginName}`});
+        const data = await requestGET({reporter, url: `${API_URL}/plugin/${pluginName}`});
 
         const $ = load(data.wiki.content);
-        $('a[id^="user-content"][href^="#"]').remove();
+        $('a.anchor[href^="#"]').remove();
         data.wiki.content = $.html();
 
         return createWikiNode('text/pluginhtml', wiki.url, data.wiki.content);
@@ -409,13 +415,8 @@ export const fetchLabelData = async ({createNode, reporter}) => {
 export const fetchSiteInfo = async ({createNode, reporter}) => {
     const sectionActivity = reporter.activityTimer('fetch plugin api info');
     sectionActivity.start();
-    const url = `${API_URL}/info`;
-    const info = await requestGET({url, reporter});
 
     createNode({
-        api: {
-            ...info
-        },
         website: {
             commit: execSync('git rev-parse HEAD').toString().trim(),
             version: findPackageJson().next().value.version,
@@ -447,15 +448,20 @@ export const fetchStats = async ({reporter, stats}) => {
         for (const pluginRow of pluginInstalls) {
             const [pluginName, installs] = csvParse(pluginRow);
             stats[pluginName] = stats[pluginName] || {installations: []};
-            stats[pluginName].installations[timeSpan - monthsAgo] = {timestamp: timestamp, total: installs};
+            stats[pluginName].installations[timeSpan - monthsAgo] = {
+                timestamp: timestamp,
+                total: installs,
+                percentage: installs * 100 / coreInstalls
+            };
         }
     }
     for (const pluginName of Object.keys(stats)) {
         for (let idx = 0; idx < timeSpan; idx++) {
             stats[pluginName].installations[idx] = stats[pluginName].installations[idx]
-                || {total: 0, timestamp: timestamps[idx]};
+                || {total: 0, timestamp: timestamps[idx], percentage: 0};
         }
         stats[pluginName].currentInstalls = stats[pluginName].installations[timeSpan - 1].total || 0;
+        stats[pluginName].currentInstallPercentage = stats[pluginName].installations[timeSpan - 1].percentage || 0;
     }
 };
 
@@ -507,12 +513,23 @@ export const fetchPluginVersions = async ({createNode, reporter, firstReleases})
 export const fetchPluginHealthScore = async ({createNode, reporter}) => {
     const sectionActivity = reporter.activityTimer('fetch plugin health score');
     sectionActivity.start();
-    const url = 'https://plugin-health.jenkins.io/api/scores';
-    const json = await requestGET({url, reporter});
-    for (const pluginName of Object.keys(json.plugins)) {
-        const data = json.plugins[pluginName];
+    const baseURL = 'https://plugin-health.jenkins.io/api';
+    const {plugins, statistics} = await requestGET({url: `${baseURL}/scores`, reporter});
+    for (const pluginName of Object.keys(plugins)) {
+        const {value, details} = plugins[pluginName];
+        const detailsArray = [];
+        for (const categoryName of Object.keys(details)) {
+            detailsArray.push(
+                {
+                    ...details[categoryName],
+                    name: categoryName
+                },
+            );
+        }
+
         createNode({
-            ...data,
+            value,
+            details: detailsArray,
             id: pluginName,
             parent: null,
             children: [],
@@ -525,5 +542,20 @@ export const fetchPluginHealthScore = async ({createNode, reporter}) => {
             }
         });
     }
+
+    createNode({
+        ...statistics,
+        id: 'pluginHealthStatistics',
+        name: 'pluginHealthStatistics',
+        parent: null,
+        children: [],
+        internal: {
+            type: 'JenkinsPluginHealthScoreStatistics',
+            contentDigest: crypto
+                .createHash('md5')
+                .update('pluginHealthScoreStatistics')
+                .digest('hex')
+        }
+    });
     sectionActivity.end();
 };

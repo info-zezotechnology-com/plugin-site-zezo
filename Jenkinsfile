@@ -1,20 +1,26 @@
 pipeline {
-  environment {
-    GET_CONTENT = "true"
-    NODE_ENV = "production"
-    HOME = "/tmp"
-    TZ = "UTC"
-  }
-
-  agent {
-    label 'docker&&linux'
-  }
-
   options {
     timeout(time: 60, unit: 'MINUTES')
     ansiColor('xterm')
     disableConcurrentBuilds(abortPrevious: true)
     buildDiscarder logRotator(artifactDaysToKeepStr: '', artifactNumToKeepStr: '', daysToKeepStr: '5', numToKeepStr: '5')
+  }
+
+  agent {
+    label 'node'
+  }
+
+  triggers {
+    cron("${env.BRANCH_IS_PRIMARY ? 'H H/3 * * *' : ''}")
+  }
+
+  environment {
+    GET_CONTENT = 'true'
+    TZ = 'UTC'
+    // Amount of available vCPUs, to avoid OOM - https://www.gatsbyjs.com/docs/how-to/performance/resolving-out-of-memory-issues/#try-reducing-the-number-of-cores
+    // and 'The command failed for workspaces that are depended upon by other workspaces; can't satisfy the dependency graph' error
+    // https://github.com/jenkins-infra/jenkins-infra/tree/production/hieradata/clients/controller.ci.jenkins.io.yaml#L327
+    GATSBY_CPU_COUNT = '4'
   }
 
   stages {
@@ -25,24 +31,22 @@ pipeline {
       }
     }
 
-    stage('NPM Install') {
-      agent {
-        docker {
-          image 'node:18.15.0'
-          reuseNode true
-        }
+    stage('Install dependencies') {
+      environment {
+        NODE_ENV = 'development'
       }
       steps {
-        sh('yarn install')
+        sh '''
+        asdf install
+        yarn install
+        '''
       }
     }
 
-    stage('Build Production') {
-      agent {
-        docker {
-          image 'node:18.15.0'
-          reuseNode true
-        }
+    stage('Build') {
+      environment {
+        DISABLE_SEARCH_ENGINE = 'true'
+        NODE_ENV = 'development'
       }
       steps {
         sh('yarn build')
@@ -50,31 +54,101 @@ pipeline {
     }
 
     stage('Check build') {
-      agent {
-        docker {
-          image 'node:18.15.0'
-          reuseNode true
-        }
-      }
+      when { expression { return !fileExists('./plugins/plugin-site/public/index.html') } }
       steps {
-        sh 'test -e ./plugins/plugin-site/public/index.html || exit 1'
+        error('Something went wrong, index.html was not generated')
       }
     }
 
     stage('Lint and Test') {
       environment {
-        NODE_ENV = "development"
-        NODE_OPTIONS="--experimental-vm-modules"
+        NODE_ENV = 'development'
+        NODE_OPTIONS = '--experimental-vm-modules'
       }
-      agent {
-        docker {
-          image 'node:18.15.0'
-          reuseNode true
+      steps {
+        sh '''
+        yarn lint
+        yarn test
+        '''
+      }
+    }
+
+    stage('Deploy to preview site') {
+      when {
+        allOf {
+          changeRequest()
+          // Only deploy from infra.ci.jenkins.io
+          expression { infra.isInfra() }
+        }
+      }
+      environment {
+        NETLIFY_AUTH_TOKEN = credentials('netlify-auth-token')
+      }
+      steps {
+        sh('netlify-deploy --siteName "jenkins-plugin-site-pr" --title "Preview deploy for ${CHANGE_ID}" --alias "deploy-preview-${CHANGE_ID}" -d ./plugins/plugin-site/public')
+      }
+      post {
+        success {
+          recordDeployment('jenkins-infra', 'plugin-site', pullRequest.head, 'success', "https://deploy-preview-${CHANGE_ID}--jenkins-plugin-site-pr.netlify.app")
+        }
+        failure {
+          recordDeployment('jenkins-infra', 'plugin-site', pullRequest.head, 'failure', "https://deploy-preview-${CHANGE_ID}--jenkins-plugin-site-pr.netlify.app")
+        }
+      }
+    }
+
+    stage('Build production') {
+      when {
+        allOf{
+          expression { env.BRANCH_IS_PRIMARY }
+          expression { infra.isInfra() }
+        }
+      }
+      environment {
+        NODE_ENV = 'production'
+        GATSBY_MATOMO_SITE_ID = '1'
+        GATSBY_MATOMO_SITE_URL = 'https://jenkins-matomo.do.g4v.dev'
+      }
+      steps {
+        sh 'yarn build'
+      }
+    }
+
+    stage('Deploy to production') {
+      when {
+        allOf{
+          expression { env.BRANCH_IS_PRIMARY }
+          // Only deploy from infra.ci.jenkins.io
+          expression { infra.isInfra() }
         }
       }
       steps {
-        sh('yarn lint')
-        sh('yarn test')
+        script {
+          infra.withFileShareServicePrincipal([
+            servicePrincipalCredentialsId: 'infraci-pluginsjenkinsio-fileshare-service-principal-writer',
+            fileShare: 'plugins-jenkins-io',
+            fileShareStorageAccount: 'pluginsjenkinsio'
+          ]) {
+            sh '''
+            # Don't output sensitive information
+            set +x
+
+            # Synchronize the File Share content
+            azcopy sync \
+              --skip-version-check \
+              --recursive=true\
+              --delete-destination=true \
+              --compare-hash=MD5 \
+              --put-md5 \
+              --local-hash-storage-mode=HiddenFiles \
+              ./plugins/plugin-site/public/ "${FILESHARE_SIGNED_URL}"
+
+            # Retrieve azcopy logs to archive them
+            cat /home/jenkins/.azcopy/*.log > azcopy.log
+            '''
+            archiveArtifacts 'azcopy.log'
+          }
+        }
       }
     }
   }

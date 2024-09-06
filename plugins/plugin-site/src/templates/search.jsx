@@ -55,14 +55,14 @@ const doSearch = (data, setResults, categoriesMap) => {
     ).then(({nbHits, page, nbPages, hits, hitsPerPage}) => {
         return setResults({
             total: nbHits,
-            pages: nbPages + 1,
+            pages: nbPages,
             page: page + 1,
             limit: hitsPerPage,
             plugins: hits
         });
     }).catch(err => {
-        window?.Sentry?.captureException(err);
-        // FIXME alert/console.log/somehow tell user something went wrong
+        // eslint-disable-next-line no-console
+        console.error('Search error:', err);
     });
 };
 

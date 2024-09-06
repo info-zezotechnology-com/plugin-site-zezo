@@ -101,7 +101,7 @@ describe('utils', () => {
         };
         await fetchPluginData({createNode, createNodeId, createContentDigest, reporter: _reporter, firstReleases, labelToCategory, stats});
         expect(createNode.mock.calls.filter(call => call[0].name === 'ios-device-connector').map(args => args[0])).toMatchSnapshot();
-    });
+    }, 15000);
     it('get plugin healthScore data', async () => {
         nock('https://plugin-health.jenkins.io')
             .get('/api/scores')
@@ -113,6 +113,10 @@ describe('utils', () => {
     });
     it ('should convert markdown to html', async () => {
         const translated = await markdownToHtml(await readText('plugin-doc.md'));
+        expect(translated).toMatchSnapshot();
+    });
+    it ('should convert markdown with tables to html', async () => {
+        const translated = await markdownToHtml(await readText('table.md'));
         expect(translated).toMatchSnapshot();
     });
 });

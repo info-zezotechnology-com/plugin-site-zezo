@@ -35,8 +35,9 @@ function PluginPageLayout({plugin, children}) {
         {id: 'releases', to: `/${plugin.name}/releases/`, label: 'Releases'},
         {id: 'issues', to: `/${plugin.name}/issues/`, label: 'Issues'},
         {id: 'dependencies', to: `/${plugin.name}/dependencies/`, label: 'Dependencies'},
+        {id: 'health-score', to: `/${plugin.name}/healthscore/`, label: 'Health Score'},
     ];
-
+    const wiki = plugin.wiki || {};
     const [isShowInstructions, setShowInstructions] = React.useState(false);
     const toggleShowInstructions = (e) => {
         e && e.preventDefault();
@@ -78,10 +79,8 @@ function PluginPageLayout({plugin, children}) {
                         {plugin.name}
                     </div>
                     <div className="sidebarSection">
-                        {plugin.stats && <h5>
-                            {'Installs: '}
-                            <PluginReadableInstalls currentInstalls={plugin.stats.currentInstalls} />
-                        </h5>}
+                        <PluginReadableInstalls currentInstalls={plugin.stats.currentInstalls}
+                            percentage={plugin.stats.currentInstallPercentage} />
                         <div className="chart">
                             <LineChart
                                 installations={plugin.stats.installations}
@@ -105,11 +104,11 @@ function PluginPageLayout({plugin, children}) {
                         <h5>Maintainers</h5>
                         <PluginDevelopers developers={plugin.developers} />
                     </div>
-                    {shouldShowWikiUrl(plugin.wiki) &&
+                    {shouldShowWikiUrl(wiki) &&
                         <div className="sidebarSection">
                             <h5>Help us improve this page!</h5>
                             {'This content is served from the  '}
-                            <a href={plugin.wiki.url} target="_wiki">Jenkins Wiki Export</a>
+                            <a href={wiki.url} target="_wiki">Jenkins Wiki Export</a>
                             {' which is now '}
                             <a href="https://www.jenkins.io/blog/2021/09/04/wiki-attacked/" rel="noopener noreferrer" target="_blank">permanently offline</a>
                             {' and before that a '}
@@ -119,11 +118,11 @@ function PluginPageLayout({plugin, children}) {
                             {'.'}
                         </div>
                     }
-                    {shouldShowGitHubUrl(plugin.wiki) &&
+                    {shouldShowGitHubUrl(wiki) &&
                         <div className="sidebarSection">
                             <h5>Help us improve this page!</h5>
                             {'To propose a change submit a pull request to  '}
-                            <a href={plugin.wiki.url} rel="noopener noreferrer" target="_blank">the plugin page</a>
+                            <a href={wiki.url} rel="noopener noreferrer" target="_blank">the plugin page</a>
                             {' on GitHub.'}
                         </div>
                     }
